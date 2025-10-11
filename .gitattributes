@@ -1,0 +1,12 @@
+# Linguist settings for GitHub language statistics
+*.sol linguist-language=Solidity
+*.js linguist-language=JavaScript
+
+# Documentation
+*.md linguist-documentation
+
+# Generated files
+artifacts/* linguist-generated=true
+cache/* linguist-generated=true
+typechain/* linguist-generated=true
+typechain-types/* linguist-generated=true
