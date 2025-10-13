@@ -9,27 +9,10 @@ import "./PropertyFractions.sol";
 
 /**
  * @title TokenizationManager
- * @dev Core orchestration contract for the real estate tokenization system.
+ * @dev FIXED VERSION: Removed NFT transfer from startDistribution since NFT is already locked during tokenization
  * 
- * This contract manages the entire lifecycle of property tokenization:
- * 1. Minting PropertyDeed NFTs representing property ownership
- * 2. Deploying PropertyFractions contracts for fractional shares
- * 3. Locking PropertyDeeds when fractionalized
- * 4. Managing the distribution and sale of fractional shares
- * 5. Handling payments and fund distribution
- * 
- * Key Features:
- * - Orchestrates tokenization of properties into fractional shares
- * - Locks PropertyDeed NFTs during fractionalization
- * - Manages distribution and pricing of fractions
- * - Handles secure payment processing for fraction purchases
- * - Tracks all tokenized properties and their fraction contracts
- * 
- * Security Considerations:
- * - ReentrancyGuard prevents reentrancy attacks on payable functions
- * - Access controls ensure only authorized operations
- * - SafeERC20 patterns for secure token transfers
- * - Proper validation of all inputs and state transitions
+ * Key Fix: The PropertyDeed NFT is minted directly to this contract and stays locked.
+ * Owners only need to approve their PropertyFractions ERC20 tokens for sale.
  */
 contract TokenizationManager is Ownable, ReentrancyGuard, IERC721Receiver {
     
@@ -38,13 +21,6 @@ contract TokenizationManager is Ownable, ReentrancyGuard, IERC721Receiver {
     
     /**
      * @dev Structure representing a tokenized property
-     * @param propertyId The ID of the PropertyDeed NFT
-     * @param fractionsContract Address of the PropertyFractions contract
-     * @param isLocked Whether the PropertyDeed is locked in this contract
-     * @param isDistributing Whether fractions are currently available for sale
-     * @param pricePerFraction Price in wei for one fraction token (with 18 decimals)
-     * @param owner Original owner who tokenized the property
-     * @param totalFractionsSold Number of fractions sold so far
      */
     struct TokenizedProperty {
         uint256 propertyId;
@@ -66,7 +42,7 @@ contract TokenizationManager is Ownable, ReentrancyGuard, IERC721Receiver {
     mapping(uint256 => bool) public isPropertyTokenized;
     
     /**
-     * @dev Emitted when a property is successfully tokenized
+     * @dev Events
      */
     event PropertyTokenized(
         uint256 indexed propertyId,
@@ -75,26 +51,17 @@ contract TokenizationManager is Ownable, ReentrancyGuard, IERC721Receiver {
         uint256 timestamp
     );
     
-    /**
-     * @dev Emitted when distribution starts for a property's fractions
-     */
     event DistributionStarted(
         uint256 indexed propertyId,
         uint256 pricePerFraction,
         uint256 timestamp
     );
     
-    /**
-     * @dev Emitted when distribution is stopped
-     */
     event DistributionStopped(
         uint256 indexed propertyId,
         uint256 timestamp
     );
     
-    /**
-     * @dev Emitted when fractions are purchased
-     */
     event FractionsPurchased(
         uint256 indexed propertyId,
         address indexed buyer,
@@ -103,9 +70,6 @@ contract TokenizationManager is Ownable, ReentrancyGuard, IERC721Receiver {
         uint256 timestamp
     );
     
-    /**
-     * @dev Emitted when a PropertyDeed is locked in the contract
-     */
     event PropertyDeedLocked(
         uint256 indexed propertyId,
         address indexed owner,
@@ -114,7 +78,6 @@ contract TokenizationManager is Ownable, ReentrancyGuard, IERC721Receiver {
     
     /**
      * @dev Constructor deploys the PropertyDeed contract
-     * The deployer becomes the owner of the TokenizationManager
      */
     constructor() Ownable(msg.sender) {
         propertyDeedContract = new PropertyDeed();
@@ -122,30 +85,11 @@ contract TokenizationManager is Ownable, ReentrancyGuard, IERC721Receiver {
     
     /**
      * @dev Allows the contract to receive ETH
-     * This is necessary for the emergency withdrawal functionality
      */
     receive() external payable {}
     
     /**
-     * @dev Tokenizes a property by minting a deed NFT, deploying a fractions contract,
-     * and locking the deed in this contract.
-     * 
-     * This is the main function that orchestrates the entire tokenization process:
-     * 1. Mints a new PropertyDeed NFT
-     * 2. Deploys a new PropertyFractions contract for that property
-     * 3. Mints the total supply of fractions to the caller
-     * 4. Locks the PropertyDeed NFT in this contract
-     * 
-     * @param propertyAddress Physical address of the property
-     * @param metadataURI URI pointing to property metadata (e.g., IPFS)
-     * @return propertyId The ID of the newly minted PropertyDeed
-     * @return fractionsContract Address of the deployed PropertyFractions contract
-     * 
-     * Requirements:
-     * - Property address cannot be empty
-     * - Caller will receive all initial fractions
-     * 
-     * Emits {PropertyTokenized} and {PropertyDeedLocked} events
+     * @dev Tokenizes a property - PropertyDeed is minted to THIS contract and locked immediately
      */
     function tokenizeProperty(
         string memory propertyAddress,
@@ -153,7 +97,7 @@ contract TokenizationManager is Ownable, ReentrancyGuard, IERC721Receiver {
     ) external nonReentrant returns (uint256 propertyId, address fractionsContract) {
         require(bytes(propertyAddress).length > 0, "TokenizationManager: Property address required");
         
-        // Step 1: Mint PropertyDeed NFT to this contract (will be locked here)
+        // Step 1: Mint PropertyDeed NFT to THIS CONTRACT (already locked)
         propertyId = propertyDeedContract.mintPropertyDeed(
             address(this),
             propertyAddress,
@@ -167,7 +111,7 @@ contract TokenizationManager is Ownable, ReentrancyGuard, IERC721Receiver {
         );
         fractionsContract = address(fractions);
         
-        // Step 3: Mint total supply of fractions to the caller
+        // Step 3: Mint total supply of fractions to the CALLER (property owner)
         fractions.mintInitialSupply(msg.sender);
         
         // Step 4: Record the tokenized property
@@ -191,22 +135,10 @@ contract TokenizationManager is Ownable, ReentrancyGuard, IERC721Receiver {
     }
     
     /**
-     * @dev Starts the distribution phase for a property's fractions
+     * @dev Starts distribution - Owner must approve THIS contract to spend their PropertyFractions tokens
      * 
-     * The property owner can set a price and enable public purchasing of fractions.
-     * Owner must have approved this contract to spend their fractions before calling.
-     * 
-     * @param propertyId The ID of the property
-     * @param pricePerFractionInWei Price in wei for one whole fraction token (1e18 units)
-     * 
-     * Requirements:
-     * - Caller must be the property owner
-     * - Property must be tokenized
-     * - Distribution must not already be active
-     * - Price must be greater than zero
-     * - Owner must have fractions to sell
-     * 
-     * Emits a {DistributionStarted} event
+     * IMPORTANT: Before calling this, owner must call:
+     * PropertyFractions(fractionsContract).approve(address(TokenizationManager), amount);
      */
     function startDistribution(
         uint256 propertyId,
@@ -221,7 +153,12 @@ contract TokenizationManager is Ownable, ReentrancyGuard, IERC721Receiver {
         
         // Verify owner has fractions to sell
         PropertyFractions fractions = PropertyFractions(property.fractionsContract);
-        require(fractions.balanceOf(msg.sender) > 0, "TokenizationManager: Owner has no fractions to sell");
+        uint256 ownerBalance = fractions.balanceOf(msg.sender);
+        require(ownerBalance > 0, "TokenizationManager: Owner has no fractions to sell");
+        
+        // Verify owner has approved this contract to spend their fractions
+        uint256 allowance = fractions.allowance(msg.sender, address(this));
+        require(allowance > 0, "TokenizationManager: Owner must approve fractions for sale first");
         
         property.isDistributing = true;
         property.pricePerFraction = pricePerFractionInWei;
@@ -230,15 +167,7 @@ contract TokenizationManager is Ownable, ReentrancyGuard, IERC721Receiver {
     }
     
     /**
-     * @dev Stops the distribution phase for a property's fractions
-     * 
-     * @param propertyId The ID of the property
-     * 
-     * Requirements:
-     * - Caller must be the property owner
-     * - Distribution must be active
-     * 
-     * Emits a {DistributionStopped} event
+     * @dev Stops the distribution phase
      */
     function stopDistribution(uint256 propertyId) external {
         TokenizedProperty storage property = tokenizedProperties[propertyId];
@@ -253,28 +182,7 @@ contract TokenizationManager is Ownable, ReentrancyGuard, IERC721Receiver {
     }
     
     /**
-     * @dev Allows users to purchase fractions of a property with ETH
-     * 
-     * This function calculates the total cost and transfers:
-     * 1. ETH from buyer to property owner
-     * 2. Fraction tokens from property owner to buyer
-     * 
-     * @param propertyId The ID of the property
-     * @param numberOfFractions Number of whole fraction tokens to buy (simple number: 1, 10, 100, etc.)
-     * 
-     * Note: Input is in whole numbers (e.g., 10 means 10 fractions).
-     *       The function automatically converts to the internal 18-decimal format.
-     * 
-     * Requirements:
-     * - Property must be tokenized
-     * - Distribution must be active
-     * - Buyer cannot be the property owner
-     * - Number of fractions must be greater than zero
-     * - Sufficient ETH must be sent to cover the cost
-     * - Property owner must have enough fractions
-     * - Property owner must have approved this contract to spend fractions
-     * 
-     * Emits a {FractionsPurchased} event
+     * @dev Allows users to purchase fractions with ETH
      */
     function buyFractions(
         uint256 propertyId,
@@ -287,28 +195,28 @@ contract TokenizationManager is Ownable, ReentrancyGuard, IERC721Receiver {
         require(msg.sender != property.owner, "TokenizationManager: Owner cannot buy own fractions");
         require(numberOfFractions > 0, "TokenizationManager: Must buy at least one fraction");
         
-        // Convert numberOfFractions to 18 decimal format (e.g., 10 becomes 10 * 10^18)
+        // Convert to 18 decimals
         uint256 fractionsInWei = numberOfFractions * 1e18;
         
-        // Calculate total cost (pricePerFraction is per 1e18 units)
+        // Calculate total cost
         uint256 totalCost = (property.pricePerFraction * numberOfFractions);
         require(msg.value >= totalCost, "TokenizationManager: Insufficient ETH sent");
         
         PropertyFractions fractions = PropertyFractions(property.fractionsContract);
         
-        // Check owner has enough fractions (compare in wei units)
+        // Check owner has enough fractions
         require(
             fractions.balanceOf(property.owner) >= fractionsInWei,
             "TokenizationManager: Owner has insufficient fractions"
         );
         
-        // Check allowance (compare in wei units)
+        // Check allowance
         require(
             fractions.allowance(property.owner, address(this)) >= fractionsInWei,
             "TokenizationManager: Insufficient allowance from owner"
         );
         
-        // Transfer fractions from owner to buyer (use fractionsInWei for the token transfer)
+        // Transfer fractions from owner to buyer
         require(
             fractions.transferFrom(property.owner, msg.sender, fractionsInWei),
             "TokenizationManager: Fraction transfer failed"
@@ -318,10 +226,10 @@ contract TokenizationManager is Ownable, ReentrancyGuard, IERC721Receiver {
         (bool success, ) = payable(property.owner).call{value: totalCost}("");
         require(success, "TokenizationManager: ETH transfer failed");
         
-        // Update total fractions sold (store in wei units for internal tracking)
+        // Update total fractions sold
         property.totalFractionsSold += fractionsInWei;
         
-        // Refund excess ETH if any
+        // Refund excess ETH
         if (msg.value > totalCost) {
             (bool refundSuccess, ) = payable(msg.sender).call{value: msg.value - totalCost}("");
             require(refundSuccess, "TokenizationManager: Refund failed");
@@ -331,15 +239,7 @@ contract TokenizationManager is Ownable, ReentrancyGuard, IERC721Receiver {
     }
     
     /**
-     * @dev Updates the price per fraction during distribution
-     * 
-     * @param propertyId The ID of the property
-     * @param newPricePerFractionInWei New price in wei for one fraction
-     * 
-     * Requirements:
-     * - Caller must be the property owner
-     * - Property must be tokenized
-     * - New price must be greater than zero
+     * @dev Updates the price per fraction
      */
     function updateFractionPrice(
         uint256 propertyId,
@@ -356,8 +256,6 @@ contract TokenizationManager is Ownable, ReentrancyGuard, IERC721Receiver {
     
     /**
      * @dev Returns details of a tokenized property
-     * @param propertyId The ID of the property
-     * @return TokenizedProperty struct with all property details
      */
     function getTokenizedProperty(uint256 propertyId) external view returns (TokenizedProperty memory) {
         require(isPropertyTokenized[propertyId], "TokenizationManager: Property not tokenized");
@@ -366,7 +264,6 @@ contract TokenizationManager is Ownable, ReentrancyGuard, IERC721Receiver {
     
     /**
      * @dev Returns all tokenized property IDs
-     * @return Array of all property IDs that have been tokenized
      */
     function getAllPropertyIds() external view returns (uint256[] memory) {
         return allPropertyIds;
@@ -374,15 +271,13 @@ contract TokenizationManager is Ownable, ReentrancyGuard, IERC721Receiver {
     
     /**
      * @dev Returns the total number of tokenized properties
-     * @return Total count of tokenized properties
      */
     function getTotalTokenizedProperties() external view returns (uint256) {
         return allPropertyIds.length;
     }
     
     /**
-     * @dev Required implementation of IERC721Receiver to accept PropertyDeed NFTs
-     * This allows the contract to receive ERC721 tokens via safeTransferFrom
+     * @dev Required for receiving ERC721 tokens
      */
     function onERC721Received(
         address /* operator */,
@@ -394,8 +289,7 @@ contract TokenizationManager is Ownable, ReentrancyGuard, IERC721Receiver {
     }
     
     /**
-     * @dev Allows the contract owner to withdraw any accidentally sent ETH
-     * This is a safety mechanism and should not be needed in normal operation
+     * @dev Emergency withdraw function
      */
     function emergencyWithdraw() external onlyOwner {
         uint256 balance = address(this).balance;

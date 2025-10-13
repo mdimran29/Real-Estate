@@ -1,0 +1,9 @@
+{
+  "network": "sepolia",
+  "tokenizationManager": "0xcE5938311925624E9FE619cc493AF5eA16bc46E2",
+  "propertyDeed": "0x414AbAbf01976f66757a3bF3a603adB95b97fDe6",
+  "propertyFractions": "0x955E5FBCF653CcF1edccef8c4F727d529aB2aedF",
+  "deployer": "0xc92060cE977fC0b3430eB29195b3dBA4808440e2",
+  "timestamp": "2025-10-12T08:03:50.447Z",
+  "blockNumber": 9394726
+}
