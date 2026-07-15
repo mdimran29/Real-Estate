@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
 import { ethers } from 'ethers';
+import { useWeb3 } from '../contexts/Web3Context';
 
 const WalletModal = ({ isOpen, onClose, onConnect }) => {
+  const { isWalletConnectConfigured } = useWeb3();
   const [selectedWallet, setSelectedWallet] = useState(null);
   const [isConnecting, setIsConnecting] = useState(false);
   const [error, setError] = useState(null);
@@ -44,15 +46,17 @@ const WalletModal = ({ isOpen, onClose, onConnect }) => {
     {
       id: 'walletconnect',
       name: 'WalletConnect',
-      icon: '�',
-      description: 'Connect using WalletConnect',
-      isInstalled: true, // WalletConnect doesn't require installation
+      icon: '🔗',
+      description: isWalletConnectConfigured
+        ? 'Scan with your mobile wallet'
+        : 'Not configured (missing VITE_WALLETCONNECT_PROJECT_ID)',
+      isInstalled: true, // WalletConnect doesn't require a browser extension
       downloadUrl: 'https://walletconnect.com/',
     },
   ];
 
   const handleConnect = async (wallet) => {
-    if (!wallet.isInstalled) {
+    if (wallet.id !== 'walletconnect' && !wallet.isInstalled) {
       window.open(wallet.downloadUrl, '_blank');
       return;
     }
@@ -62,15 +66,8 @@ const WalletModal = ({ isOpen, onClose, onConnect }) => {
       setError(null);
       setSelectedWallet(wallet.id);
 
-      if (wallet.id === 'walletconnect') {
-        // WalletConnect implementation would go here
-        // For now, show a message that it's coming soon
-        setError('WalletConnect integration coming soon!');
-        setIsConnecting(false);
-        return;
-      }
-
-      // For other wallets, call onConnect with wallet type
+      // For WalletConnect this triggers the QR modal; onConnect awaits the
+      // full session approval before resolving.
       await onConnect(wallet.id);
       onClose();
     } catch (err) {

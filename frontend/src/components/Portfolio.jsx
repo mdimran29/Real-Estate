@@ -3,7 +3,9 @@ import { ethers } from 'ethers';
 import { useWeb3 } from '../contexts/Web3Context';
 import { usePortfolio } from '../hooks/usePortfolio';
 import PropertyCard from './PropertyCard';
-import { formatEther, transferFractions, formatFractions } from '../utils/contracts';
+import RentalIncome from './RentalIncome';
+import MyListings from './MyListings';
+import { formatEther, transferFractions, formatFractions, createFractionListing, isFeatureAvailable } from '../utils/contracts';
 
 const Portfolio = () => {
   const { isConnected, account, signer } = useWeb3();
@@ -13,6 +15,13 @@ const Portfolio = () => {
   const [transferData, setTransferData] = useState({ recipient: '', amount: '' });
   const [transferError, setTransferError] = useState('');
   const [transferSuccess, setTransferSuccess] = useState('');
+
+  const [listing, setListing] = useState(false);
+  const [listingForm, setListingForm] = useState({ propertyId: null, show: false });
+  const [listingData, setListingData] = useState({ amount: '', price: '' });
+  const [listingError, setListingError] = useState('');
+  const [listingSuccess, setListingSuccess] = useState('');
+  const marketplaceAvailable = isFeatureAvailable('FRACTION_MARKETPLACE');
 
   // Helper function to format balance from wei to readable number
   const formatBalance = (balance) => {
@@ -81,6 +90,66 @@ const Portfolio = () => {
       setTransferError(err.message || 'Failed to transfer fractions');
     } finally {
       setTransferring(false);
+    }
+  };
+
+  const handleShowListingForm = (propertyId) => {
+    setListingForm({ propertyId, show: true });
+    setListingData({ amount: '', price: '' });
+    setListingError('');
+    setListingSuccess('');
+  };
+
+  const handleCancelListing = () => {
+    setListingForm({ propertyId: null, show: false });
+    setListingData({ amount: '', price: '' });
+    setListingError('');
+  };
+
+  const handleCreateListing = async (propertyId, balance) => {
+    if (!listingData.amount || !listingData.price) {
+      setListingError('Please fill in all fields');
+      return;
+    }
+
+    const amount = parseInt(listingData.amount);
+    if (isNaN(amount) || amount <= 0) {
+      setListingError('Invalid amount');
+      return;
+    }
+
+    const price = parseFloat(listingData.price);
+    if (isNaN(price) || price <= 0) {
+      setListingError('Invalid price');
+      return;
+    }
+
+    const formattedBalance = parseFloat(formatBalance(balance));
+    if (amount > formattedBalance) {
+      setListingError(`You only have ${formattedBalance} fractions`);
+      return;
+    }
+
+    try {
+      setListing(true);
+      setListingError('');
+
+      const amountInWei = ethers.parseUnits(amount.toString(), 18);
+      const priceInWei = ethers.parseEther(price.toString());
+
+      await createFractionListing(signer, propertyId, amountInWei, priceInWei);
+
+      setListingSuccess(`Successfully listed ${amount} fractions for sale!`);
+      setTimeout(() => {
+        setListingForm({ propertyId: null, show: false });
+        setListingSuccess('');
+        refetch();
+      }, 2000);
+    } catch (err) {
+      console.error('Listing error:', err);
+      setListingError(err.message || 'Failed to create listing');
+    } finally {
+      setListing(false);
     }
   };
 
@@ -256,8 +325,8 @@ const Portfolio = () => {
                         )}
                       </div>
 
-                      {/* Transfer Button */}
-                      <div className="flex-shrink-0">
+                      {/* Transfer / List for Resale Buttons */}
+                      <div className="flex-shrink-0 flex items-center space-x-2">
                         <button
                           onClick={() => handleShowTransferForm(holding.propertyId)}
                           className="btn-secondary text-sm py-2 px-4 flex items-center space-x-2"
@@ -268,6 +337,18 @@ const Portfolio = () => {
                           </svg>
                           <span>Transfer</span>
                         </button>
+                        {marketplaceAvailable && (
+                          <button
+                            onClick={() => handleShowListingForm(holding.propertyId)}
+                            className="btn-secondary text-sm py-2 px-4 flex items-center space-x-2"
+                            disabled={listing}
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                            </svg>
+                            <span>List for Resale</span>
+                          </button>
+                        )}
                       </div>
                     </div>
 
@@ -351,11 +432,103 @@ const Portfolio = () => {
                         </div>
                       </div>
                     )}
+
+                    {/* Listing Form */}
+                    {listingForm.show && listingForm.propertyId === holding.propertyId && (
+                      <div className="border-t border-gray-200 p-4 bg-white">
+                        <h5 className="text-sm font-semibold text-gray-800 mb-3">List Fractions for Resale</h5>
+
+                        {listingError && (
+                          <div className="mb-3 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600">
+                            {listingError}
+                          </div>
+                        )}
+
+                        {listingSuccess && (
+                          <div className="mb-3 p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-600">
+                            {listingSuccess}
+                          </div>
+                        )}
+
+                        <div className="space-y-3">
+                          <div>
+                            <label className="block text-xs text-gray-600 mb-1">
+                              Amount (Max: {formatBalance(holding.balance)})
+                            </label>
+                            <input
+                              type="number"
+                              min="1"
+                              max={formatBalance(holding.balance)}
+                              placeholder="Number of fractions"
+                              value={listingData.amount}
+                              onChange={(e) => setListingData({ ...listingData, amount: e.target.value })}
+                              className="input-field text-sm"
+                              disabled={listing}
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-xs text-gray-600 mb-1">Price per fraction (ETH)</label>
+                            <input
+                              type="number"
+                              step="0.0001"
+                              min="0"
+                              placeholder="0.001"
+                              value={listingData.price}
+                              onChange={(e) => setListingData({ ...listingData, price: e.target.value })}
+                              className="input-field text-sm"
+                              disabled={listing}
+                            />
+                          </div>
+
+                          <div className="flex space-x-2 pt-2">
+                            <button
+                              onClick={() => handleCreateListing(holding.propertyId, holding.balance)}
+                              disabled={listing}
+                              className="flex-1 btn-primary text-sm py-2 flex items-center justify-center space-x-2"
+                            >
+                              {listing ? (
+                                <>
+                                  <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                  </svg>
+                                  <span>Listing...</span>
+                                </>
+                              ) : (
+                                <>
+                                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                  </svg>
+                                  <span>Confirm Listing</span>
+                                </>
+                              )}
+                            </button>
+                            <button
+                              onClick={handleCancelListing}
+                              disabled={listing}
+                              className="flex-1 btn-secondary text-sm py-2"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
             )}
           </div>
+
+          {/* Rental Income */}
+          <RentalIncome
+            ownedProperties={nfts.map((nft) => nft.id)}
+            heldProperties={fractions.map((holding) => holding.propertyId)}
+          />
+
+          {/* My Secondary Market Listings */}
+          <MyListings />
 
           {/* Summary Stats */}
           {(nfts.length > 0 || fractions.length > 0) && (

@@ -1,5 +1,6 @@
-import { createContext, useContext, useState, useEffect } from 'react';
+import { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { ethers } from 'ethers';
+import { EthereumProvider } from '@walletconnect/ethereum-provider';
 
 console.log('Web3Context.jsx loading...');
 
@@ -15,7 +16,7 @@ export const useWeb3 = () => {
 
 export const Web3Provider = ({ children }) => {
   console.log('Web3Provider rendering...');
-  
+
   const [account, setAccount] = useState(null);
   const [provider, setProvider] = useState(null);
   const [signer, setSigner] = useState(null);
@@ -26,10 +27,17 @@ export const Web3Provider = ({ children }) => {
   const [isConnecting, setIsConnecting] = useState(false);
   const [error, setError] = useState(null);
 
+  // Holds the raw EIP-1193 provider currently in use (window.ethereum for
+  // injected wallets, or the WalletConnect EthereumProvider instance for
+  // WalletConnect sessions). Needed so switchNetwork/disconnect/event
+  // listeners work correctly regardless of which wallet type is active.
+  const rawProviderRef = useRef(null);
+
   const targetChainId = import.meta.env.VITE_CHAIN_ID || '11155111'; // Sepolia
   const targetNetworkName = import.meta.env.VITE_NETWORK_NAME || 'Sepolia';
+  const walletConnectProjectId = import.meta.env.VITE_WALLETCONNECT_PROJECT_ID || '';
 
-  // Check if any wallet is installed
+  // Check if any injected wallet is installed
   const isMetaMaskInstalled = () => {
     return typeof window !== 'undefined' && typeof window.ethereum !== 'undefined';
   };
@@ -45,7 +53,7 @@ export const Web3Provider = ({ children }) => {
 
     // Multiple providers detected
     const providers = window.ethereum.providers;
-    
+
     switch (walletType) {
       case 'metamask':
         return providers.find(p => p.isMetaMask) || window.ethereum;
@@ -64,11 +72,11 @@ export const Web3Provider = ({ children }) => {
       // ENS is only available on Ethereum mainnet
       // For other networks, we need to use a mainnet provider
       const mainnetProvider = new ethers.JsonRpcProvider('https://eth.llamarpc.com');
-      
+
       const ensName = await mainnetProvider.lookupAddress(address);
       if (ensName) {
         setEnsName(ensName);
-        
+
         // Try to get ENS avatar
         const resolver = await mainnetProvider.getResolver(ensName);
         if (resolver) {
@@ -99,34 +107,109 @@ export const Web3Provider = ({ children }) => {
     }
   };
 
-  // Connect wallet with specific wallet type
-  const connectWallet = async (walletType = 'metamask') => {
+  // Bind accountsChanged/chainChanged/disconnect listeners to whichever
+  // raw EIP-1193 provider is currently active (injected or WalletConnect)
+  const bindProviderEvents = (rawProvider) => {
+    const handleAccountsChanged = (accounts) => {
+      if (!accounts || accounts.length === 0) {
+        disconnectWallet();
+      } else {
+        setAccount(accounts[0]);
+      }
+    };
+
+    const handleChainChanged = () => {
+      // Reload the page on network change as recommended by MetaMask/WalletConnect
+      window.location.reload();
+    };
+
+    const handleDisconnect = () => {
+      disconnectWallet();
+    };
+
+    rawProvider.on('accountsChanged', handleAccountsChanged);
+    rawProvider.on('chainChanged', handleChainChanged);
+    rawProvider.on('disconnect', handleDisconnect);
+
+    return () => {
+      rawProvider.removeListener?.('accountsChanged', handleAccountsChanged);
+      rawProvider.removeListener?.('chainChanged', handleChainChanged);
+      rawProvider.removeListener?.('disconnect', handleDisconnect);
+    };
+  };
+
+  // Connect via an injected wallet (MetaMask, Coinbase Wallet, Trust Wallet)
+  const connectInjectedWallet = async (walletType) => {
     if (!isMetaMaskInstalled()) {
-      setError('Please install a Web3 wallet to use this application');
-      return;
+      throw new Error('Please install a Web3 wallet to use this application');
     }
 
+    const walletProvider = getWalletProvider(walletType);
+    if (!walletProvider) {
+      throw new Error(`${walletType} wallet not found`);
+    }
+
+    rawProviderRef.current = walletProvider;
+
+    const ethersProvider = new ethers.BrowserProvider(walletProvider);
+    const accounts = await ethersProvider.send('eth_requestAccounts', []);
+
+    if (accounts.length === 0) {
+      throw new Error('No accounts found');
+    }
+
+    return { ethersProvider, accounts };
+  };
+
+  // Connect via WalletConnect (QR code / mobile wallet deep link)
+  const connectWalletConnect = async () => {
+    if (!walletConnectProjectId) {
+      throw new Error(
+        'WalletConnect is not configured. Set VITE_WALLETCONNECT_PROJECT_ID in your .env (get one free at https://cloud.reown.com).'
+      );
+    }
+
+    const wcProvider = await EthereumProvider.init({
+      projectId: walletConnectProjectId,
+      chains: [parseInt(targetChainId)],
+      showQrModal: true,
+      metadata: {
+        name: 'PropToken',
+        description: 'Real Estate Tokenization Platform',
+        url: typeof window !== 'undefined' ? window.location.origin : 'https://proptoken.app',
+        icons: [],
+      },
+    });
+
+    await wcProvider.connect();
+
+    rawProviderRef.current = wcProvider;
+
+    const ethersProvider = new ethers.BrowserProvider(wcProvider);
+    const accounts = wcProvider.accounts;
+
+    if (!accounts || accounts.length === 0) {
+      throw new Error('No accounts found');
+    }
+
+    return { ethersProvider, accounts };
+  };
+
+  // Connect wallet with specific wallet type
+  const connectWallet = async (walletType = 'metamask') => {
     try {
       setIsConnecting(true);
       setError(null);
 
-      // Get the specific wallet provider
-      const walletProvider = getWalletProvider(walletType);
-      if (!walletProvider) {
-        throw new Error(`${walletType} wallet not found`);
-      }
+      const { ethersProvider, accounts } =
+        walletType === 'walletconnect'
+          ? await connectWalletConnect()
+          : await connectInjectedWallet(walletType);
 
-      const provider = new ethers.BrowserProvider(walletProvider);
-      const accounts = await provider.send('eth_requestAccounts', []);
-      
-      if (accounts.length === 0) {
-        throw new Error('No accounts found');
-      }
+      const signer = await ethersProvider.getSigner();
+      const network = await ethersProvider.getNetwork();
 
-      const signer = await provider.getSigner();
-      const network = await provider.getNetwork();
-      
-      setProvider(provider);
+      setProvider(ethersProvider);
       setSigner(signer);
       setAccount(accounts[0]);
       setNetwork({
@@ -134,9 +217,11 @@ export const Web3Provider = ({ children }) => {
         name: network.name,
       });
 
+      bindProviderEvents(rawProviderRef.current);
+
       // Fetch balance and ENS
-      await fetchBalance(accounts[0], provider);
-      await fetchENS(accounts[0], provider);
+      await fetchBalance(accounts[0], ethersProvider);
+      await fetchENS(accounts[0], ethersProvider);
 
       // Check if on correct network
       if (network.chainId.toString() !== targetChainId) {
@@ -153,6 +238,14 @@ export const Web3Provider = ({ children }) => {
 
   // Disconnect wallet
   const disconnectWallet = () => {
+    // WalletConnect sessions need an explicit disconnect to close the pairing
+    if (rawProviderRef.current?.disconnect) {
+      rawProviderRef.current.disconnect().catch((err) => {
+        console.error('Error disconnecting WalletConnect session:', err);
+      });
+    }
+    rawProviderRef.current = null;
+
     setAccount(null);
     setProvider(null);
     setSigner(null);
@@ -163,18 +256,21 @@ export const Web3Provider = ({ children }) => {
     setError(null);
   };
 
-  // Switch to target network
+  // Switch to target network (works for both injected and WalletConnect providers)
   const switchNetwork = async () => {
+    const rawProvider = rawProviderRef.current || window.ethereum;
+    if (!rawProvider) return;
+
     try {
-      await window.ethereum.request({
+      await rawProvider.request({
         method: 'wallet_switchEthereumChain',
         params: [{ chainId: `0x${parseInt(targetChainId).toString(16)}` }],
       });
     } catch (switchError) {
-      // This error code indicates that the chain has not been added to MetaMask
+      // This error code indicates that the chain has not been added to the wallet
       if (switchError.code === 4902) {
         try {
-          await window.ethereum.request({
+          await rawProvider.request({
             method: 'wallet_addEthereumChain',
             params: [
               {
@@ -200,7 +296,8 @@ export const Web3Provider = ({ children }) => {
     }
   };
 
-  // Listen for account changes
+  // Listen for account changes on the injected wallet before any connection
+  // is made (post-connection listeners are bound via bindProviderEvents)
   useEffect(() => {
     if (!isMetaMaskInstalled()) return;
 
@@ -209,7 +306,6 @@ export const Web3Provider = ({ children }) => {
         disconnectWallet();
       } else if (accounts[0] !== account) {
         setAccount(accounts[0]);
-        // Refresh signer, balance, and ENS
         if (provider) {
           provider.getSigner().then(setSigner);
           fetchBalance(accounts[0], provider);
@@ -218,8 +314,7 @@ export const Web3Provider = ({ children }) => {
       }
     };
 
-    const handleChainChanged = (chainId) => {
-      // Reload the page on network change as recommended by MetaMask
+    const handleChainChanged = () => {
       window.location.reload();
     };
 
@@ -232,7 +327,8 @@ export const Web3Provider = ({ children }) => {
     };
   }, [account, provider]);
 
-  // Auto-connect if previously connected
+  // Auto-connect if previously connected via an injected wallet.
+  // (WalletConnect sessions require the QR/approval flow, so they are not auto-resumed here.)
   useEffect(() => {
     if (isMetaMaskInstalled()) {
       window.ethereum
@@ -260,6 +356,7 @@ export const Web3Provider = ({ children }) => {
     error,
     isConnected: !!account,
     isMetaMaskInstalled: isMetaMaskInstalled(),
+    isWalletConnectConfigured: !!walletConnectProjectId,
     connectWallet,
     disconnectWallet,
     switchNetwork,

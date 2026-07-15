@@ -1,0 +1,11 @@
+{
+  "network": "sepolia",
+  "deployer": "0x74D1BBB56D9F73E8483d1480595C9e94950b3638",
+  "timestamp": "2026-07-15T09:32:14.558Z",
+  "contracts": {
+    "TokenizationManager": "0xcE5938311925624E9FE619cc493AF5eA16bc46E2",
+    "RentalIncomeDistribution": "0x9f0AcC57EE05a6319D005E89041BBB60621bFe21",
+    "FractionMarketplace": "0x886EDbdE49120d86aCAAfA6472EA63E0466532D7",
+    "PropertyPriceOracle": "0xe50C6762b6B0A12052D460507E54Efb19957c30a"
+  }
+}

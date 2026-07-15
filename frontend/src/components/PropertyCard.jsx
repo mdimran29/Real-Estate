@@ -1,25 +1,40 @@
 import { useState, useEffect } from 'react';
-import { formatEther, formatAddress, formatFractions } from '../utils/contracts';
+import { formatEther, formatAddress, formatFractions, getFractionPriceInUsd, isFeatureAvailable } from '../utils/contracts';
 import { useWeb3 } from '../contexts/Web3Context';
 import { resolvePropertyImage, getPlaceholderImage } from '../utils/imageHandler';
 
 const PropertyCard = ({ property, onBuyFractions, onStartDistribution, showActions = true }) => {
-  const { account } = useWeb3();
+  const { account, provider } = useWeb3();
   const [numberOfFractions, setNumberOfFractions] = useState(1);
   const [pricePerFraction, setPricePerFraction] = useState('');
   const [showDistributionForm, setShowDistributionForm] = useState(false);
   const [showBuyForm, setShowBuyForm] = useState(false);
   const [imageUrl, setImageUrl] = useState(getPlaceholderImage());
   const [imageLoading, setImageLoading] = useState(true);
+  const [usdPrice, setUsdPrice] = useState(null);
 
   const { id, details, metadata } = property;
   const isOwner = account && details.owner.toLowerCase() === account.toLowerCase();
   const priceInEther = details.pricePerFraction ? formatEther(details.pricePerFraction) : '0';
   const totalPrice = (parseFloat(priceInEther) * numberOfFractions).toFixed(4);
-  
+
   // Format fractions for display (convert from wei to readable numbers)
   const totalFractionsFormatted = formatFractions(details.totalFractions);
   const availableFractionsFormatted = formatFractions(details.fractionsAvailable);
+
+  // Fetch USD price via the Chainlink oracle, if deployed on this network
+  useEffect(() => {
+    const loadUsdPrice = async () => {
+      if (!provider || !details.isDistributing || !details.pricePerFraction || !isFeatureAvailable('PROPERTY_PRICE_ORACLE')) {
+        setUsdPrice(null);
+        return;
+      }
+      const usd = await getFractionPriceInUsd(provider, details.pricePerFraction);
+      setUsdPrice(usd);
+    };
+
+    loadUsdPrice();
+  }, [provider, details.isDistributing, details.pricePerFraction]);
 
   // Load image with fallbacks
   useEffect(() => {
@@ -132,7 +147,12 @@ const PropertyCard = ({ property, onBuyFractions, onStartDistribution, showActio
             <>
               <div className="flex justify-between text-sm">
                 <span className="text-gray-600">Price per Fraction:</span>
-                <span className="font-medium text-primary-600">{priceInEther} ETH</span>
+                <span className="font-medium text-primary-600">
+                  {priceInEther} ETH
+                  {usdPrice !== null && (
+                    <span className="text-gray-500 font-normal"> (~${parseFloat(usdPrice).toFixed(2)})</span>
+                  )}
+                </span>
               </div>
               <div className="flex justify-between text-sm">
                 <span className="text-gray-600">Available Fractions:</span>

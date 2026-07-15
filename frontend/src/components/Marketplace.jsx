@@ -3,6 +3,7 @@ import { useWeb3 } from '../contexts/Web3Context';
 import { useProperties } from '../hooks/useProperties';
 import { buyFractions, startDistribution } from '../utils/contracts';
 import PropertyCard from './PropertyCard';
+import SecondaryMarket from './SecondaryMarket';
 
 const Marketplace = ({ showOnlyAvailable = false }) => {
   const { signer, isConnected } = useWeb3();
@@ -218,6 +219,9 @@ const Marketplace = ({ showOnlyAvailable = false }) => {
           ))}
         </div>
       )}
+
+      {/* Secondary Market - resales from other fraction holders */}
+      <SecondaryMarket />
 
       {/* Transaction Loading Overlay */}
       {transactionLoading && (

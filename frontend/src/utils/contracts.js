@@ -1,9 +1,12 @@
 import { ethers } from 'ethers';
-import { 
-  TOKENIZATION_MANAGER_ABI, 
-  PROPERTY_DEED_ABI, 
+import {
+  TOKENIZATION_MANAGER_ABI,
+  PROPERTY_DEED_ABI,
   PROPERTY_FRACTIONS_ABI,
-  ADDRESSES 
+  RENTAL_INCOME_DISTRIBUTION_ABI,
+  FRACTION_MARKETPLACE_ABI,
+  PROPERTY_PRICE_ORACLE_ABI,
+  ADDRESSES
 } from '../contracts/abis';
 
 /**
@@ -23,11 +26,32 @@ export const getContract = (contractName, signerOrProvider) => {
     case 'PROPERTY_FRACTIONS':
       abi = PROPERTY_FRACTIONS_ABI;
       break;
+    case 'RENTAL_INCOME_DISTRIBUTION':
+      abi = RENTAL_INCOME_DISTRIBUTION_ABI;
+      break;
+    case 'FRACTION_MARKETPLACE':
+      abi = FRACTION_MARKETPLACE_ABI;
+      break;
+    case 'PROPERTY_PRICE_ORACLE':
+      abi = PROPERTY_PRICE_ORACLE_ABI;
+      break;
     default:
       throw new Error(`Unknown contract: ${contractName}`);
   }
 
+  if (!address) {
+    throw new Error(`${contractName} is not deployed on this network yet`);
+  }
+
   return new ethers.Contract(address, abi, signerOrProvider);
+};
+
+/**
+ * Whether a Tier 1 feature contract has been deployed on the current network.
+ * UI should check this before rendering the corresponding feature.
+ */
+export const isFeatureAvailable = (contractName) => {
+  return Boolean(ADDRESSES[contractName]);
 };
 
 /**
@@ -491,6 +515,223 @@ export const transferFractions = async (signer, propertyId, recipientAddress, am
   } catch (error) {
     console.error('Error transferring fractions:', error);
     throw error;
+  }
+};
+
+// ==========================================================================
+// Tier 1: Rental Income Distribution
+// ==========================================================================
+
+/**
+ * Property owner deposits rental income (in ETH) for a property.
+ */
+export const depositRentalIncome = async (signer, propertyId, amountEth) => {
+  try {
+    const contract = getContract('RENTAL_INCOME_DISTRIBUTION', signer);
+    const tx = await contract.depositRentalIncome(propertyId, {
+      value: ethers.parseEther(amountEth.toString()),
+    });
+    const receipt = await tx.wait();
+    return receipt;
+  } catch (error) {
+    console.error('Error depositing rental income:', error);
+    throw error;
+  }
+};
+
+/**
+ * Claim all unclaimed rental income for a property.
+ */
+export const claimAllRentalIncome = async (signer, propertyId) => {
+  try {
+    const contract = getContract('RENTAL_INCOME_DISTRIBUTION', signer);
+    const tx = await contract.claimAllRentalIncome(propertyId);
+    const receipt = await tx.wait();
+    return receipt;
+  } catch (error) {
+    console.error('Error claiming rental income:', error);
+    throw error;
+  }
+};
+
+/**
+ * Get the amount of unclaimed rental income a holder can currently claim
+ * for a property. Returns '0' if the feature isn't deployed on this network.
+ */
+export const getClaimableRentalIncome = async (provider, propertyId, holderAddress) => {
+  if (!isFeatureAvailable('RENTAL_INCOME_DISTRIBUTION')) return '0';
+
+  try {
+    const contract = getContract('RENTAL_INCOME_DISTRIBUTION', provider);
+    const claimable = await contract.getClaimableAmount(propertyId, holderAddress);
+    return claimable.toString();
+  } catch (error) {
+    console.error('Error getting claimable rental income:', error);
+    return '0';
+  }
+};
+
+/**
+ * Get the total rental income deposited across all periods for a property
+ * (sum of each period's totalDeposited), for display purposes.
+ */
+export const getRentalHistory = async (provider, propertyId) => {
+  if (!isFeatureAvailable('RENTAL_INCOME_DISTRIBUTION')) return [];
+
+  try {
+    const contract = getContract('RENTAL_INCOME_DISTRIBUTION', provider);
+    const periodCount = await contract.getRentalPeriodCount(propertyId);
+
+    const periods = await Promise.all(
+      Array.from({ length: Number(periodCount) }, (_, i) =>
+        contract.getRentalPeriod(propertyId, i)
+      )
+    );
+
+    return periods.map((period, index) => ({
+      index,
+      totalDeposited: period.totalDeposited.toString(),
+      payoutPerFraction: period.payoutPerFraction.toString(),
+      timestamp: Number(period.timestamp),
+    }));
+  } catch (error) {
+    console.error('Error getting rental history:', error);
+    return [];
+  }
+};
+
+// ==========================================================================
+// Tier 1: Secondary Fraction Marketplace
+// ==========================================================================
+
+/**
+ * List fractions for resale. Approves the marketplace contract to spend
+ * `amount` fractions, then creates the listing.
+ */
+export const createFractionListing = async (signer, propertyId, amountInWei, pricePerFractionInWei) => {
+  try {
+    const managerContract = getContract('TOKENIZATION_MANAGER', signer);
+    const property = await managerContract.getTokenizedProperty(propertyId);
+
+    const fractionsContract = new ethers.Contract(
+      property.fractionsContract,
+      PROPERTY_FRACTIONS_ABI,
+      signer
+    );
+
+    const marketplaceAddress = ADDRESSES.FRACTION_MARKETPLACE;
+    const approvalTx = await fractionsContract.approve(marketplaceAddress, amountInWei);
+    await approvalTx.wait();
+
+    const marketplace = getContract('FRACTION_MARKETPLACE', signer);
+    const tx = await marketplace.createListing(propertyId, amountInWei, pricePerFractionInWei);
+    const receipt = await tx.wait();
+    return receipt;
+  } catch (error) {
+    console.error('Error creating fraction listing:', error);
+    throw error;
+  }
+};
+
+/**
+ * Cancel a listing (seller only).
+ */
+export const cancelFractionListing = async (signer, listingId) => {
+  try {
+    const marketplace = getContract('FRACTION_MARKETPLACE', signer);
+    const tx = await marketplace.cancelListing(listingId);
+    const receipt = await tx.wait();
+    return receipt;
+  } catch (error) {
+    console.error('Error cancelling fraction listing:', error);
+    throw error;
+  }
+};
+
+/**
+ * Buy (all or part of) a listing.
+ */
+export const buyFractionListing = async (signer, listingId, amountInWei, pricePerFractionInWei) => {
+  try {
+    const marketplace = getContract('FRACTION_MARKETPLACE', signer);
+    const totalCost = (pricePerFractionInWei * amountInWei) / ethers.parseEther('1');
+    const tx = await marketplace.buyListing(listingId, amountInWei, { value: totalCost });
+    const receipt = await tx.wait();
+    return receipt;
+  } catch (error) {
+    console.error('Error buying fraction listing:', error);
+    throw error;
+  }
+};
+
+/**
+ * Get all active secondary-market listings for a property.
+ */
+export const getListingsByProperty = async (provider, propertyId) => {
+  if (!isFeatureAvailable('FRACTION_MARKETPLACE')) return [];
+
+  try {
+    const marketplace = getContract('FRACTION_MARKETPLACE', provider);
+    const listingIds = await marketplace.getListingsByProperty(propertyId);
+
+    const listings = await Promise.all(
+      listingIds.map(async (id) => {
+        const listing = await marketplace.listings(id);
+        return {
+          id: id.toString(),
+          propertyId: listing.propertyId.toString(),
+          seller: listing.seller,
+          amount: listing.amount.toString(),
+          pricePerFraction: listing.pricePerFraction.toString(),
+          active: listing.active,
+        };
+      })
+    );
+
+    return listings.filter((listing) => listing.active && listing.amount !== '0');
+  } catch (error) {
+    console.error('Error getting listings for property:', error);
+    return [];
+  }
+};
+
+/**
+ * Get every active listing across all tokenized properties.
+ */
+export const getAllActiveListings = async (provider) => {
+  if (!isFeatureAvailable('FRACTION_MARKETPLACE')) return [];
+
+  try {
+    const propertyIds = await getAllProperties(provider);
+    const listingsByProperty = await Promise.all(
+      propertyIds.map((id) => getListingsByProperty(provider, id))
+    );
+    return listingsByProperty.flat();
+  } catch (error) {
+    console.error('Error getting all active listings:', error);
+    return [];
+  }
+};
+
+// ==========================================================================
+// Tier 1: USD Price Oracle
+// ==========================================================================
+
+/**
+ * Convert a wei-denominated fraction price to a USD estimate using the
+ * Chainlink ETH/USD feed. Returns null if the oracle isn't deployed on this
+ * network so callers can hide the USD display gracefully.
+ */
+export const getFractionPriceInUsd = async (provider, pricePerFractionInWei) => {
+  if (!isFeatureAvailable('PROPERTY_PRICE_ORACLE')) return null;
+
+  try {
+    const oracle = getContract('PROPERTY_PRICE_ORACLE', provider);
+    const usd = await oracle.fractionPriceInUsd(pricePerFractionInWei);
+    return ethers.formatEther(usd);
+  } catch (error) {
+    console.error('Error getting USD price:', error);
+    return null;
   }
 };
 
