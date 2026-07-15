@@ -9,10 +9,6 @@ import {
   formatFractions,
 } from '../utils/contracts';
 
-/**
- * Shows the connected account's own active secondary-market listings, with
- * a Cancel action for each.
- */
 const MyListings = () => {
   const { account, signer, provider, isConnected } = useWeb3();
   const { showToast } = useToast();
@@ -38,9 +34,7 @@ const MyListings = () => {
     refresh();
   }, [refresh]);
 
-  if (!featureAvailable) {
-    return null;
-  }
+  if (!featureAvailable) return null;
 
   const handleCancel = async (listingId) => {
     try {
@@ -57,44 +51,46 @@ const MyListings = () => {
   };
 
   return (
-    <div className="card">
-      <div className="flex items-center mb-6">
-        <svg className="w-8 h-8 mr-3 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
-        </svg>
-        <div>
-          <h3 className="text-2xl font-bold text-gray-800">My Secondary Market Listings</h3>
-          <p className="text-sm text-gray-600">Fractions you've listed for resale</p>
+    <div className="panel p-5 sm:p-6 animate-fadeUp">
+      <div className="flex items-center gap-3 mb-5">
+        <div className="w-9 h-9 rounded-xl bg-brand-500/10 border border-brand-500/20 flex items-center justify-center flex-shrink-0">
+          <svg className="w-5 h-5 text-brand-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+          </svg>
         </div>
-        <span className="ml-auto text-2xl font-bold text-primary-600">{listings.length}</span>
+        <div className="flex-1">
+          <h3 className="text-lg font-bold text-white">My Secondary Market Listings</h3>
+          <p className="text-xs text-slate-400">Fractions you've listed for resale</p>
+        </div>
+        <span className="text-xl font-bold text-brand-300">{listings.length}</span>
       </div>
 
       {loading ? (
-        <div className="text-center py-8 text-gray-500 text-sm">Loading your listings...</div>
+        <div className="text-center py-8 text-slate-500 text-sm">Loading your listings…</div>
       ) : listings.length === 0 ? (
-        <div className="text-center py-8 text-gray-500 text-sm">
+        <div className="text-center py-8 text-slate-500 text-sm">
           You haven't listed any fractions for resale yet. Use "List for Resale" in your
           Fractional Holdings above to sell at your own price.
         </div>
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-2.5">
           {listings.map((listing) => (
             <div
               key={listing.id}
-              className="flex items-center justify-between p-4 bg-gray-50 rounded-lg border border-gray-200"
+              className="flex items-center justify-between p-4 bg-white/[0.03] rounded-xl border border-white/[0.06] gap-3 flex-wrap"
             >
               <div>
-                <p className="font-semibold text-gray-800">Property #{listing.propertyId}</p>
-                <p className="text-sm text-gray-600">
+                <p className="font-semibold text-slate-100 text-sm">Property #{listing.propertyId}</p>
+                <p className="text-xs text-slate-400 mt-0.5">
                   {formatFractions(listing.amount)} fractions @ {formatEther(listing.pricePerFraction)} ETH each
                 </p>
               </div>
               <button
                 onClick={() => handleCancel(listing.id)}
                 disabled={cancelling === listing.id}
-                className="btn-secondary text-sm py-2 px-4 text-red-600 hover:bg-red-50"
+                className="btn-danger text-xs py-2 px-4"
               >
-                {cancelling === listing.id ? 'Cancelling...' : 'Cancel Listing'}
+                {cancelling === listing.id ? 'Cancelling…' : 'Cancel Listing'}
               </button>
             </div>
           ))}
