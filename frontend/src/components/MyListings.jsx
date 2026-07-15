@@ -38,7 +38,7 @@ const MyListings = () => {
     refresh();
   }, [refresh]);
 
-  if (!featureAvailable || listings.length === 0) {
+  if (!featureAvailable) {
     return null;
   }
 
@@ -69,28 +69,37 @@ const MyListings = () => {
         <span className="ml-auto text-2xl font-bold text-primary-600">{listings.length}</span>
       </div>
 
-      <div className="space-y-3">
-        {listings.map((listing) => (
-          <div
-            key={listing.id}
-            className="flex items-center justify-between p-4 bg-gray-50 rounded-lg border border-gray-200"
-          >
-            <div>
-              <p className="font-semibold text-gray-800">Property #{listing.propertyId}</p>
-              <p className="text-sm text-gray-600">
-                {formatFractions(listing.amount)} fractions @ {formatEther(listing.pricePerFraction)} ETH each
-              </p>
-            </div>
-            <button
-              onClick={() => handleCancel(listing.id)}
-              disabled={cancelling === listing.id}
-              className="btn-secondary text-sm py-2 px-4 text-red-600 hover:bg-red-50"
+      {loading ? (
+        <div className="text-center py-8 text-gray-500 text-sm">Loading your listings...</div>
+      ) : listings.length === 0 ? (
+        <div className="text-center py-8 text-gray-500 text-sm">
+          You haven't listed any fractions for resale yet. Use "List for Resale" in your
+          Fractional Holdings above to sell at your own price.
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {listings.map((listing) => (
+            <div
+              key={listing.id}
+              className="flex items-center justify-between p-4 bg-gray-50 rounded-lg border border-gray-200"
             >
-              {cancelling === listing.id ? 'Cancelling...' : 'Cancel Listing'}
-            </button>
-          </div>
-        ))}
-      </div>
+              <div>
+                <p className="font-semibold text-gray-800">Property #{listing.propertyId}</p>
+                <p className="text-sm text-gray-600">
+                  {formatFractions(listing.amount)} fractions @ {formatEther(listing.pricePerFraction)} ETH each
+                </p>
+              </div>
+              <button
+                onClick={() => handleCancel(listing.id)}
+                disabled={cancelling === listing.id}
+                className="btn-secondary text-sm py-2 px-4 text-red-600 hover:bg-red-50"
+              >
+                {cancelling === listing.id ? 'Cancelling...' : 'Cancel Listing'}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 };
